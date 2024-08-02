@@ -16,7 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
-
+#define _XOPEN_SOURCE 500
+#define O_RDONLY	     00
 #include "alloc.h"
 #include "bufmap_setup.h"
 #include "calibrate.h"
@@ -30,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <fcntl.h>//For open() in reading pagemap
+#include <unistd.h>//For pread() in reading pagemap
 
 static int VERBOSITY = V_ERR;
 
@@ -47,7 +50,9 @@ static void print_entry(struct AddrEntry e, FILE *f, const char *trail)
 		fprintf(f, "0x%zx " DRAMADDR_HEX_FMTSTR " ", addr,
 		        d.chan, d.dimm, d.rank, d.bank, d.row, d.col);
 	} else {
-		fprintf(f, DRAMADDR_HEX_FMTSTR " ", d.chan, d.dimm, d.rank, d.bank, d.row, d.col);
+		// fprintf(f, DRAMADDR_HEX_FMTSTR " ", d.chan, d.dimm, d.rank, d.bank, d.row, d.col);
+		fprintf(f, "VA = 0x%zx, DA = " DRAMADDR_HEX_FMTSTR " ", e.virtp,
+				d.chan, d.dimm, d.rank, d.bank, d.row, d.col);
 	}
 	if (trail) {
 		fputs(trail, f);
@@ -310,6 +315,23 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Setting up targets (size %zu buffer)... ", p.alloc_sz);
 	}
 	buf = alloc_hammerbuf(p.alloc_sz, p.alloc_al, p.alloc_flags);
+	//==============================================Print allocated memory pagemap===========================================================
+	int fd = open("/proc/self/pagemap", O_RDONLY);
+	FILE * k = fopen("pagemap.txt", "w");
+	uint64_t physical_address;
+	for (uint64_t offset = 0; offset < p.alloc_sz; offset += 0x1000){
+		uint8_t* virtual_address = (uint8_t*)(buf) + (offset);
+        uint64_t value;
+		uintptr_t v = (uintptr_t)virtual_address;
+		off_t pagemap_off = ((uintptr_t)v >> 12) * sizeof(value);
+		int got = pread(fd, &value, sizeof(value), pagemap_off);
+		assert(got == 8);
+		physical_address = ((value & ((1ULL << 55)-1))<<12);
+		fprintf(k, "Virtual Address = %p, Physical Address = %lx\n", virtual_address, physical_address);
+	}
+	close(fd);
+	fclose(k);
+	//=======================================================================================================================================
 	if (buf == NULL) {
 		perror("Error allocating hammer buffer");
 		goto err_out;
